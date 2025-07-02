@@ -61,7 +61,7 @@ class ImpedanceSource:
         Rs=0,
         Q=0,
         ang_freq=0,
-        harm_rf=3,
+        harm_rf=1,
         calc_method=Methods.ImpedanceDFT,
         active_passive=ActivePassive.Passive,
     ):
@@ -79,6 +79,11 @@ class ImpedanceSource:
         self._loop_ctrl_transfer = 0
         self._zl_table = None
         self._ang_freq_table = None
+        self._ref_amp = None
+        self._ref_phase = None
+        self._ref_phase_offset = 0
+        self.generator_amp = None
+        self.generator_phase = None
         self.calc_method = calc_method
         self.active_passive = active_passive
 
@@ -246,6 +251,30 @@ class ImpedanceSource:
     @ang_freq_table.setter
     def ang_freq_table(self, value):
         self._ang_freq_table = value
+
+    @property
+    def ref_amp(self):
+        return self._ref_amp
+    
+    @ref_amp.setter
+    def ref_amp(self, value):
+        self._ref_amp = value
+
+    @property
+    def ref_phase(self):
+        return self._ref_phase
+    
+    @ref_phase.setter
+    def ref_phase(self, value):
+        self._ref_phase = value
+
+    @property
+    def ref_phase_offset(self):
+        return self._ref_phase_offset
+    
+    @ref_phase_offset.setter
+    def ref_phase_offset(self, value):
+        self._ref_phase_offset = value
 
     def to_dict(self):
         """Save state to dictionary."""
@@ -521,6 +550,15 @@ class LongitudinalEquilibrium:
         n2 = harm_rf**2
         kharm = 1 / n2 - ((U0 / Vrf) ** 2) / (n2 - 1)
         return kharm ** (1 / 2)
+    
+    def calc_harmonic_phase_for_flat_potential(self, harm_rf=3):
+        """."""
+        U0 = self.ring.en_lost_rad
+        Vrf = self.ring.gap_voltage
+        iover = U0/Vrf
+        a = - harm_rf * iover
+        b = ((harm_rf**2 - 1)**2 - (harm_rf**2 * iover)**2)**(1/2)
+        return _np.atan(a / b) / harm_rf
 
     def calc_detune_for_fixed_harmonic_voltage(
         self, peak_harm_volt, harm_rf=3, Rs=0, form_factor=None
@@ -792,6 +830,9 @@ class LongitudinalEquilibrium:
         harm_volt = Vt.real
         harm_volt -= alpha / wrbar * Vt.imag
         harm_volt *= -2 * alpha * rsh * rev_time
+
+        self._wake_matrix = None
+        self._exp_z = None
         return harm_volt
 
     def calc_longitudinal_equilibrium(
@@ -819,35 +860,48 @@ class LongitudinalEquilibrium:
         self._exp_z = None
         return dists, converged
 
-    def get_generator_voltage(self):
+    def get_generator_voltage(self, source, beamload):
         """."""
+        ref_amp = source.ref_amp
+        ref_phase = source.ref_phase
+        ref_phase_offset = source.ref_phase_offset
+        harm_rf = source.harm_rf
         if self.feedback_on:
             err = "Feedback is on but there is no active beam loading voltage!"
-            if self.beamload_active is not None:
-                val = _np.sum(self.beamload_active)
+            if beamload is not None:
+                val = _np.sum(beamload)
                 if not val:
                     raise ValueError(err)
             else:
                 raise ValueError(err)
             if self.feedback_method == self.FeedbackMethod.Phasor:
                 # Phasor compensation
-                _vg = self._feedback_phasor()
+                _vg, _gen_amp, _gen_phase = self._feedback_phasor(
+                    beamload, ref_amp, ref_phase, harm_rf, ref_phase_offset
+                )
             elif self.feedback_method == self.FeedbackMethod.LeastSquares:
                 # Least-squares minimization
-                _vg = self._feedback_least_squares()
+                _vg, _gen_amp, _gen_phase = self._feedback_least_squares(
+                    beamload, ref_amp, ref_phase, harm_rf, ref_phase_offset
+                )
             else:
                 raise ValueError(
                     "Wrong feedback method: must be"
                     + "'Phasor' or 'LeastSquares'"
                 )
         else:
-            amp = self.main_ref_amp
-            phase = self.main_ref_phase
-            phase += self.main_ref_phase_offset
+            amp = ref_amp
+            phase = ref_phase + ref_phase_offset
             _vg = self.ring.get_voltage_waveform(
-                self.zgrid, amplitude=amp, phase=phase
-            )[None, :]
-        return _vg
+                self.zgrid, 
+                amplitude=amp, 
+                phase=phase, 
+                rfharmonic=ref_phase_offset)[None, :]
+            _gen_amp = amp
+            _gen_phase = phase
+        source.generator_amp = _gen_amp
+        source.generator_phase = _gen_phase
+        return _vg, source
 
     def calc_equilibrium_info(
         self,
@@ -1692,7 +1746,8 @@ class LongitudinalEquilibrium:
         # t0 = _time.time()
         xk = self._reshape_dist(xk)
         total_volt = _np.zeros(xk.shape)
-        self.beamload_active = _np.zeros(xk.shape)
+        beamload_actives = []
+        idx_actives = []
         idx_wake = self._get_wake_types_idx()
         if idx_wake:
             wake_sources = [self.impedance_sources[idx] for idx in idx_wake]
@@ -1700,12 +1755,9 @@ class LongitudinalEquilibrium:
             _func = self.calc_induced_voltage_wake
             for wake in wake_sources:
                 if wake.active_passive == ImpedanceSource.ActivePassive.Active:
-                    self.beamload_active += _func(wake_source=wake, dist=xk)
-                    self._wake_matrix = None
-                    self._exp_z = None
+                    beamload_actives.append(_func(wake_source=wake, dist=xk))
+                    idx_actives.append(self.impedance_sources.index(wake))
                 total_volt += _func(wake_source=wake, dist=xk)
-                self._wake_matrix = None
-                self._exp_z = None
 
         idx_imp = self._get_impedance_types_idx()
         if idx_imp:
@@ -1730,7 +1782,10 @@ class LongitudinalEquilibrium:
         # tf1 = _time.time()
         # print(f'CalcIndVoltage: {tf1-t0:.3f}s')
         # tf2 = _time.time()
-        total_volt += self.get_generator_voltage()
+        for idx, beamload in zip(idx_actives, beamload_actives):
+            source = self.impedance_sources[idx]
+            vg, source = self.get_generator_voltage(source, beamload)
+            total_volt += vg
         # print(f'CalcGenVoltage: {tf2-tf1:.3f}s')
         self.total_voltage = total_volt
         # tf3 = _time.time()
@@ -1738,59 +1793,54 @@ class LongitudinalEquilibrium:
         # print(f'CalcDist: {tf3-tf2:.3f}s')
         return fxk.ravel()
 
-    def _feedback_phasor(self):
-        ref_amp = self.main_ref_amp
-        ref_phase = self.main_ref_phase
-        ref_phase += self.main_ref_phase_offset
+
+    def _feedback_phasor(self, beamload, ref_amp, ref_phase, harm_rf, ref_phase_offset=0):
+        ref_phase += ref_phase_offset
         wrf = _2PI * self.ring.rf_freq
-        phase = wrf * self.zgrid / _c
+        phase = harm_rf * wrf * self.zgrid / _c
         dz = _np.diff(self.zgrid)[0]
         vref_phasor = ref_amp * _np.exp(1j * (_PI / 2 - ref_phase))
         vbeamload_phasor = _np.mean(
-            _mytrapz(self.beamload_active * _np.exp(1j * phase)[None, :], dz)
+            _mytrapz(beamload * _np.exp(1j * phase)[None, :], dz)
         )
-        vbeamload_phasor *= 2 / (self.zgrid[-1] - self.zgrid[0])
+        # vbeamload_phasor *= 2 / (self.zgrid[-1] - self.zgrid[0])
+        vbeamload_phasor *= 2 / self.ring.rf_lamb
         vg_phasor = vref_phasor - vbeamload_phasor
+        gen_amp = _np.abs(vg_phasor)
+        gen_phase = _np.angle(vg_phasor)
         vg = _np.real(vg_phasor * _np.exp(-1j * phase))
-        self.main_gen_amp_mon = _np.abs(vg_phasor)
-        self.main_gen_phase_mon = _np.angle(vg_phasor)
-        return vg[None, :]
+        return vg[None, :], gen_amp, gen_phase
 
-    def _feedback_least_squares(self):
-        ref_amp = self.main_ref_amp
-        ref_phase = self.main_ref_phase
-        ref_phase += self.main_ref_phase_offset
+    def _feedback_least_squares(self, beamload, ref_amp, ref_phase, harm_rf, ref_phase_offset=0):
+        ref_phase += ref_phase_offset
         x0 = [ref_amp, ref_phase]
         wrf = _2PI * self.ring.rf_freq
-        phase = wrf * self.zgrid / _c
+        phase = harm_rf * wrf * self.zgrid / _c
         dz = self.zgrid[1] - self.zgrid[0]
 
         vref = self.ring.get_voltage_waveform(
-            self.zgrid, amplitude=ref_amp, phase=ref_phase
+            self.zgrid, amplitude=ref_amp, phase=ref_phase, rfharmonic=harm_rf
         )
         res = _least_squares(
             fun=self._feedback_err,
             x0=x0,
-            args=(phase, dz, self.beamload_active, vref),
+            args=(phase, dz, beamload, vref, self.ring.harm_num),
             method="lm",
         )
         gen_amp = _np.sqrt(res.x[0] ** 2 + res.x[1] ** 2)
-        gen_phase = _np.arctan2(res.x[1], res.x[0])
-
-        self.main_gen_amp_mon = gen_amp
-        self.main_gen_phase_mon = gen_phase
+        gen_phase = _np.arctan2(res.x[1], res.x[0]) / harm_rf
         vg = self.ring.get_voltage_waveform(
-            self.zgrid, amplitude=gen_amp, phase=gen_phase
+            self.zgrid, amplitude=gen_amp, phase=gen_phase, rfharmonic=harm_rf
         )
-        return vg[None, :]
+        return vg[None, :], gen_amp, gen_phase
 
     @staticmethod
     def _feedback_err(x, *args):
-        phase, dz, vbeamload, vref = args
+        phase, dz, vbeamload, vref, h = args
         vgen = LongitudinalEquilibrium._generator_model(phase, x[0], x[1])
         err = (vgen[None, :] + vbeamload) - vref[None, :]
         err = _mytrapz(err * err, dz)
-        return err
+        return err if err.shape[0] > 1 else _np.tile(err, h)
 
     @staticmethod
     def _generator_model(phase, a, b):
