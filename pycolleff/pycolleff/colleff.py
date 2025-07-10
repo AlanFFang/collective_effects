@@ -163,8 +163,7 @@ class Ring:
         phase0 = phase or self.sync_phase
         wrf = 2*_np.pi*self.rf_freq
         ph = wrf * zgrid / _LSPEED
-        ph += phase0
-        voltage = amp*_np.sin(rfharmonic * ph)
+        voltage = amp*_np.sin(rfharmonic * ph + phase0)
         return voltage
 
     def budget_summary(self, budget, fillpattern=None):
