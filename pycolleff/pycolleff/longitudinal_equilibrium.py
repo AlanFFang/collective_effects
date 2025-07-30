@@ -918,11 +918,7 @@ class LongitudinalEquilibrium:
         harm_rf = source.harm_rf
         if source.feedback_on:
             err = "Feedback is on but there is no active beam loading voltage!"
-            if beamload is not None:
-                val = _np.sum(beamload)
-                if not val:
-                    raise ValueError(err)
-            else:
+            if not len(beamload):
                 raise ValueError(err)
             if source.feedback_method == ImpedanceSource.FeedbackMethod.Phasor:
                 # Phasor compensation
@@ -1842,7 +1838,7 @@ class LongitudinalEquilibrium:
         idx_passive_imp = self._get_impedance_types_idx(filter="passive")
         if idx_passive_imp:
             imp_passive_sources = [self.impedance_sources[idx] for idx in idx_passive_imp]
-            _func = self._check_impedance_method(imp)
+            _func = self._check_impedance_method(imp_passive_sources[0])
             total_volt += _func(imp_sources=imp_passive_sources, dist=xk)
 
         if not idx_active_imp and not idx_passive_imp and not idx_wake:
@@ -1869,37 +1865,45 @@ class LongitudinalEquilibrium:
         ref_phase += ref_phase_offset
         wrf = _2PI * self.ring.rf_freq
         phase = harm_rf * wrf * self.zgrid / _c
-        dz = _np.diff(self.zgrid)[0]
-        vref_phasor = ref_amp * _np.exp(1j * (_PI / 2 - ref_phase))
-        vbeamload_phasor = _np.mean(
-            _mytrapz(beamload * _np.exp(1j * phase)[None, :], dz)
-        )
-        # vbeamload_phasor *= 2 / (self.zgrid[-1] - self.zgrid[0])
-        vbeamload_phasor *= 2 / self.ring.rf_lamb
-        vg_phasor = vref_phasor - vbeamload_phasor
+        vref_phasor = ref_amp * _np.exp(1j * (_PI / 2 - ref_phase)) 
+        if not _np.sum(beamload):
+            # if beamloading = 0, generator = reference
+            vg_phasor = vref_phasor
+        else:
+            dz = _np.diff(self.zgrid)[0]
+            vbeamload_phasor = _np.mean(
+                _mytrapz(beamload * _np.exp(1j * phase)[None, :], dz)
+            )
+            vbeamload_phasor *= 2 / (self.zgrid[-1] - self.zgrid[0])
+            vg_phasor = vref_phasor - vbeamload_phasor
         gen_amp = _np.abs(vg_phasor)
         gen_phase = _np.angle(vg_phasor)
         vg = _np.real(vg_phasor * _np.exp(-1j * phase))
         return vg[None, :], gen_amp, gen_phase
 
     def _feedback_least_squares(self, beamload, ref_amp, ref_phase, harm_rf, ref_phase_offset=0):
-        ref_phase += ref_phase_offset
-        x0 = [ref_amp, ref_phase]
-        wrf = _2PI * self.ring.rf_freq
-        dz = self.zgrid[1] - self.zgrid[0]
+        if not _np.sum(beamload):
+            print("if beamloading = 0, generator = reference")
+            gen_amp = ref_amp
+            gen_phase = ref_phase + ref_phase_offset 
+        else:
+            ref_phase += ref_phase_offset
+            x0 = [ref_amp, ref_phase]
+            wrf = _2PI * self.ring.rf_freq
+            dz = self.zgrid[1] - self.zgrid[0]
 
-        vref = self.ring.get_voltage_waveform(
-            self.zgrid, amplitude=ref_amp, phase=ref_phase, rfharmonic=harm_rf
-        )
-        phase = harm_rf * wrf * self.zgrid / _c
-        res = _least_squares(
-            fun=self._feedback_err,
-            x0=x0,
-            args=(phase, dz, beamload, vref, self.ring.harm_num),
-            method="lm",
-        )
-        gen_amp = _np.sqrt(res.x[0] ** 2 + res.x[1] ** 2)
-        gen_phase = _np.arctan2(res.x[1], res.x[0]) 
+            vref = self.ring.get_voltage_waveform(
+                self.zgrid, amplitude=ref_amp, phase=ref_phase, rfharmonic=harm_rf
+            )
+            phase = harm_rf * wrf * self.zgrid / _c
+            res = _least_squares(
+                fun=self._feedback_err,
+                x0=x0,
+                args=(phase, dz, beamload, vref, self.ring.harm_num),
+                method="lm",
+            )
+            gen_amp = _np.sqrt(res.x[0] ** 2 + res.x[1] ** 2)
+            gen_phase = _np.arctan2(res.x[1], res.x[0])
         vg = self.ring.get_voltage_waveform(
             self.zgrid, amplitude=gen_amp, phase=gen_phase, rfharmonic=harm_rf
         )
