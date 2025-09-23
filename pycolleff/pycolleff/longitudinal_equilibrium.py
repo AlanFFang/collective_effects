@@ -384,6 +384,7 @@ class ImpedanceSource:
         ftmp = "{0:20s}: {1:3.2f}  {2:s}\n".format
         etmp = "{0:20s}: {1:.2e}  {2:s}\n".format
         mega = 1e-6
+        kilo = 1e-3
         stg = stmp("calc_method", self.calc_method_str, "")
         stg += stmp("active_passive", self.active_passive_str, "")
         stg += ftmp("ang_freq_rf", self.ang_freq_rf * mega, "[Mrad/s]")
@@ -393,10 +394,16 @@ class ImpedanceSource:
         stg += ftmp("RoverQ", self.RoverQ, "[Ohm]")
         stg += ftmp("harm_rf", self.harm_rf, "")
         stg += ftmp("detune_angle", self.detune_angle, "[rad]")
-        stg += ftmp("detune_freq", self.detune_freq / 1e3, "[kHz]")
+        stg += ftmp("detune_freq", self.detune_freq * kilo, "[kHz]")
         stg += ftmp("detune_w", self.detune_w, "[rad/s]")
         stg += ftmp("alpha", self.alpha, "[rad/s]")
         stg += ftmp("ang_freq_bar", self.ang_freq_bar * mega, "[Mrad/s]")
+        if self.ref_amp is not None:
+            stg += ftmp("ref_amp", self.ref_amp * kilo, "[kV]")
+            stg += ftmp("ref_phase", self.ref_phase, "[rad]")
+        if self.generator_amp is not None:
+            stg += ftmp("generator_amp", self.generator_amp * kilo, "[kV]")
+            stg += ftmp("generator_phase", self.generator_phase, "[rad]")
         return stg
 
 
@@ -446,16 +453,8 @@ class LongitudinalEquilibrium:
         self.min_mode0_ratio = 1e-9
         self.nr_cpus = None
 
-
         self.main_ref_phase_offset = 0.0  # [radian]
 
-        # If feedback_on = True, this will not be used
-        self.main_ref_amp = self.ring.gap_voltage
-        self.main_ref_phase = self.ring.sync_phase
-
-        # If feedback_on = True, this will be updated
-        self.main_gen_amp_mon = None
-        self.main_gen_phase_mon = None
 
         self.equilibrium_info = dict()
         self.identical_bunches = False
@@ -602,7 +601,7 @@ class LongitudinalEquilibrium:
         dist = _np.tile(dist, (self.ring.harm_num, 1))
         return dist
 
-    def calc_harmonic_voltage_for_flat_potential(self, harm_rf=3):
+    def calc_harmonic_voltage_for_flat_potential(self, harm_rf):
         """."""
         U0 = self.ring.en_lost_rad
         Vrf = self.ring.gap_voltage
@@ -610,7 +609,7 @@ class LongitudinalEquilibrium:
         kharm = 1 / n2 - ((U0 / Vrf) ** 2) / (n2 - 1)
         return kharm ** (1 / 2)
     
-    def calc_harmonic_phase_for_flat_potential(self, harm_rf=3):
+    def calc_harmonic_phase_for_flat_potential(self, harm_rf):
         """."""
         U0 = self.ring.en_lost_rad
         Vrf = self.ring.gap_voltage
@@ -620,14 +619,16 @@ class LongitudinalEquilibrium:
         return _np.arctan(a / b)
 
     def calc_detune_for_fixed_harmonic_voltage(
-        self, peak_harm_volt, harm_rf=3, Rs=0, form_factor=None
+        self, peak_harm_volt, harm_rf, Rs, form_factor=None
     ):
         """."""
         I0 = self.ring.total_current
         # TODO: This way of including the form factor is temporary. Fix it.
-        wr = _2PI * self.ring.rf_freq * harm_rf
         if form_factor is None:
+            wr = _2PI * self.ring.rf_freq * harm_rf
             form_factor = self.calc_fourier_transform(wr)[self.filled_buckets]
+        else:
+            form_factor = [1]
         ib = 2 * I0 * _np.abs(form_factor).mean()
         arg = peak_harm_volt / ib / Rs
         return _np.arccos(arg)
@@ -886,7 +887,7 @@ class LongitudinalEquilibrium:
         return harm_volt
 
     def calc_longitudinal_equilibrium(
-        self, niter=100, tol=1e-10, beta=1, m=3, print_flag=True
+        self, niter=100, tol=1e-10, beta=1, m=3, print_flag=True, initial_dist=None,
     ):
         """."""
         self.print_flag = print_flag
@@ -895,10 +896,9 @@ class LongitudinalEquilibrium:
                 raise Exception(
                     "identical_bunches=True but fillpattern is nonuniform."
                 )
-        dists = [
-            self.distributions,
-        ]
-        dists, converged = self._apply_anderson_acceleration(
+        dist0 = self.distributions if initial_dist is None else initial_dist
+        dists = [dist0, ]
+        dists, converged, iters = self._apply_anderson_acceleration(
             dists, niter, tol, beta=beta, m=m
         )
 
@@ -908,7 +908,7 @@ class LongitudinalEquilibrium:
         # Flush pre-calculated data
         self._wake_matrix = None
         self._exp_z = None
-        return dists, converged
+        return dists, converged, iters
 
     def get_generator_voltage(self, source, beamload):
         """."""
@@ -1776,7 +1776,7 @@ class LongitudinalEquilibrium:
                 if self.print_flag:
                     print("distribution ok!")
                 break
-        return dists, converged
+        return dists, converged, k
 
     def _apply_random_convergence(self, dists, niter, tol):
         xold = dists[-1].ravel()
