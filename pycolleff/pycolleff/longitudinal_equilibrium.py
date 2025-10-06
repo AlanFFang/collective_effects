@@ -398,6 +398,8 @@ class ImpedanceSource:
         stg += ftmp("detune_w", self.detune_w, "[rad/s]")
         stg += ftmp("alpha", self.alpha, "[rad/s]")
         stg += ftmp("ang_freq_bar", self.ang_freq_bar * mega, "[Mrad/s]")
+        stg += stmp("feedback_on", self.feedback_on, "")
+        stg += stmp("feedback_method", self.feedback_method_str, "")
         if self.ref_amp is not None:
             stg += ftmp("ref_amp", self.ref_amp * kilo, "[kV]")
             stg += ftmp("ref_phase", self.ref_phase, "[rad]")
@@ -1867,7 +1869,7 @@ class LongitudinalEquilibrium:
         phase = harm_rf * wrf * self.zgrid / _c
         vref_phasor = ref_amp * _np.exp(1j * (_PI / 2 - ref_phase)) 
         if not _np.sum(beamload):
-            # if beamloading = 0, generator = reference
+            # print("if beamloading = 0, generator = reference")
             vg_phasor = vref_phasor
         else:
             dz = _np.diff(self.zgrid)[0]
@@ -1877,13 +1879,13 @@ class LongitudinalEquilibrium:
             vbeamload_phasor *= 2 / (self.zgrid[-1] - self.zgrid[0])
             vg_phasor = vref_phasor - vbeamload_phasor
         gen_amp = _np.abs(vg_phasor)
-        gen_phase = _np.angle(vg_phasor)
+        gen_phase = _np.pi/2 - _np.angle(vg_phasor)
         vg = _np.real(vg_phasor * _np.exp(-1j * phase))
         return vg[None, :], gen_amp, gen_phase
 
     def _feedback_least_squares(self, beamload, ref_amp, ref_phase, harm_rf, ref_phase_offset=0):
         if not _np.sum(beamload):
-            print("if beamloading = 0, generator = reference")
+            # print("if beamloading = 0, generator = reference")
             gen_amp = ref_amp
             gen_phase = ref_phase + ref_phase_offset 
         else:
