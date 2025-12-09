@@ -66,7 +66,7 @@ class ImpedanceSource:
         self,
         Rs=0,
         Q=0,
-        ang_freq=0,
+        ang_freq=None,
         harm_rf=1,
         calc_method=Methods.ImpedanceDFT,
         active_passive=ActivePassive.Passive,
@@ -80,7 +80,7 @@ class ImpedanceSource:
         self.shunt_impedance = Rs
 
         self.harm_rf = harm_rf
-        self.ang_freq_rf = 0
+        self.ang_freq_rf = None
         self._loop_ctrl_freq = 0
         self._loop_ctrl_transfer = 0
         self._loop_ctrl_overall_gain = 0
@@ -276,6 +276,11 @@ class ImpedanceSource:
     def detune_freq(self):
         """."""
         return self.detune_w / _2PI
+    
+    @detune_freq.setter
+    def detune_freq(self, value):
+        """."""
+        self.detune_w = _2PI * value
 
     @property
     def alpha(self):
@@ -629,8 +634,6 @@ class LongitudinalEquilibrium:
         if form_factor is None:
             wr = _2PI * self.ring.rf_freq * harm_rf
             form_factor = self.calc_fourier_transform(wr)[self.filled_buckets]
-        else:
-            form_factor = [1]
         ib = 2 * I0 * _np.abs(form_factor).mean()
         arg = peak_harm_volt / ib / Rs
         return _np.arccos(arg)
@@ -938,8 +941,12 @@ class LongitudinalEquilibrium:
                     + "'Phasor' or 'LeastSquares'"
                 )
         else:
-            amp = ref_amp
-            phase = ref_phase + ref_phase_offset
+            if source.generator_amp is None:
+                amp = ref_amp
+                phase = ref_phase + ref_phase_offset
+            else:
+                amp = source.generator_amp
+                phase = source.generator_phase
             _vg = self.ring.get_voltage_waveform(
                 self.zgrid, 
                 amplitude=amp, 
@@ -1286,6 +1293,8 @@ class LongitudinalEquilibrium:
             Zl = self.get_impedance(w=w, apply_filter=apply_filter)
 
         if reduced:
+            if use_fokker:
+                raise ValueError("use_fokker=True cannot be used when reduced=True")
             (eigenfreq, eigenvec, modecoup_matrix) = (
                 ring.reduced_longitudinal_mode_coupling(
                     w=w,
@@ -1880,7 +1889,8 @@ class LongitudinalEquilibrium:
             vg_phasor = vref_phasor - vbeamload_phasor
         gen_amp = _np.abs(vg_phasor)
         gen_phase = _np.pi/2 - _np.angle(vg_phasor)
-        vg = _np.real(vg_phasor * _np.exp(-1j * phase))
+        vg = self.ring.get_voltage_waveform(
+            self.zgrid, amplitude=gen_amp, phase=gen_phase, rfharmonic=harm_rf)
         return vg[None, :], gen_amp, gen_phase
 
     def _feedback_least_squares(self, beamload, ref_amp, ref_phase, harm_rf, ref_phase_offset=0):
