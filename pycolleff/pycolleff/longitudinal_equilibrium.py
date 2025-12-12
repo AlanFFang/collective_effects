@@ -78,6 +78,7 @@ class ImpedanceSource:
         self.ang_freq = ang_freq
         self.Q = Q
         self.shunt_impedance = Rs
+        self._beta_coupling = 0
 
         self.harm_rf = harm_rf
         self.ang_freq_rf = None
@@ -165,7 +166,7 @@ class ImpedanceSource:
         """."""
         if self.zl_table is None:
             _zl0 = _imp.longitudinal_resonator(
-                Rs=self.shunt_impedance, Q=self.Q, wr=self.ang_freq, w=w
+                Rs=self.loaded_shunt_impedance, Q=self.loaded_Q, wr=self.ang_freq, w=w
             )
         else:
             w_tab = self.ang_freq_table
@@ -257,6 +258,25 @@ class ImpedanceSource:
         return transfer
 
     @property
+    def beta_coupling(self):
+        return self._beta_coupling
+    
+    @beta_coupling.setter
+    def beta_coupling(self, val):
+        """."""
+        self._beta_coupling = val
+
+    @property
+    def loaded_shunt_impedance(self):
+        """."""
+        return self.shunt_impedance / (1 + self.beta_coupling)
+    
+    @property
+    def loaded_Q(self):
+        """."""
+        return self.Q / (1 + self.beta_coupling)
+
+    @property
     def RoverQ(self):
         """."""
         return self.shunt_impedance / self.Q
@@ -285,8 +305,8 @@ class ImpedanceSource:
     @property
     def alpha(self):
         """."""
-        return self.ang_freq / 2 / self.Q
-
+        return self.ang_freq / 2 / self.loaded_Q
+    
     @property
     def ang_freq_bar(self):
         """."""
@@ -302,7 +322,7 @@ class ImpedanceSource:
     @property
     def detune_angle(self):
         """."""
-        Q = self.Q
+        Q = self.loaded_Q
         nharm = self.harm_rf
         wrf = self.ang_freq_rf
         wr = self.ang_freq
@@ -316,7 +336,7 @@ class ImpedanceSource:
 
     @detune_angle.setter
     def detune_angle(self, value):
-        Q = self.Q
+        Q = self.loaded_Q
         nharm = self.harm_rf
         wrf = self.ang_freq_rf
 
@@ -365,12 +385,28 @@ class ImpedanceSource:
     def ref_phase_offset(self, value):
         self._ref_phase_offset = value
 
+    def optimum_detuning_freq(self, beam_current, form_factor=1+0j):
+        f_abs = _np.abs(form_factor)
+        # f_phs = _np.angle(form_factor)
+        dw = self.RoverQ * beam_current *  f_abs * _np.cos(self.ref_phase)
+        dw *= ( self.ang_freq_rf  ) / self.ref_amp
+        return dw / _2PI
+    
+    def optimum_beta_coupling(self, beam_current, form_factor=1+0j):
+        Rs0 = self.shunt_impedance
+        f_abs = _np.abs(form_factor)
+        beta = beam_current * Rs0 * f_abs 
+        beta *= _np.abs(_np.sin(self.ref_phase)) / self.ref_amp
+        beta += 1
+        return beta
+
     def to_dict(self):
         """Save state to dictionary."""
         return dict(
             ang_freq=self.ang_freq,
             Q=self.Q,
             shunt_impedance=self.shunt_impedance,
+            beta_coupling=self.beta_coupling,
             harm_rf=self.harm_rf,
             ang_freq_rf=self.ang_freq_rf,
         )
@@ -380,14 +416,15 @@ class ImpedanceSource:
         self.ang_freq = dic.get("ang_freq", self.ang_freq)
         self.Q = dic.get("Q", self.Q)
         self.shunt_impedance = dic.get("shunt_impedance", self.shunt_impedance)
+        self.beta_coupling = dic.get("beta_coupling", self.beta_coupling)
         self.harm_rf = dic.get("harm_rf", self.harm_rf)
         self.ang_freq_rf = dic.get("ang_freq_rf", self.ang_freq_rf)
 
     def __str__(self):
         """."""
-        stmp = "{0:20s}: {1:}  {2:s}\n".format
-        ftmp = "{0:20s}: {1:3.2f}  {2:s}\n".format
-        etmp = "{0:20s}: {1:.2e}  {2:s}\n".format
+        stmp = "{0:25s}: {1:}  {2:s}\n".format
+        ftmp = "{0:25s}: {1:3.2f}  {2:s}\n".format
+        etmp = "{0:25s}: {1:.2e}  {2:s}\n".format
         mega = 1e-6
         kilo = 1e-3
         stg = stmp("calc_method", self.calc_method_str, "")
@@ -397,20 +434,26 @@ class ImpedanceSource:
         stg += ftmp("shunt_impedance", self.shunt_impedance * mega, "[MOhm]")
         stg += etmp("Q", self.Q, "")
         stg += ftmp("RoverQ", self.RoverQ, "[Ohm]")
+        stg += ftmp("beta_coupling", self.beta_coupling, "")
+
         stg += ftmp("harm_rf", self.harm_rf, "")
         stg += ftmp("detune_angle", self.detune_angle, "[rad]")
         stg += ftmp("detune_freq", self.detune_freq * kilo, "[kHz]")
-        stg += ftmp("detune_w", self.detune_w, "[rad/s]")
+        stg += ftmp("detune_w", self.detune_w * kilo, "[krad/s]")
         stg += ftmp("alpha", self.alpha, "[rad/s]")
         stg += ftmp("ang_freq_bar", self.ang_freq_bar * mega, "[Mrad/s]")
-        stg += stmp("feedback_on", self.feedback_on, "")
-        stg += stmp("feedback_method", self.feedback_method_str, "")
+        is_active = self.active_passive == ImpedanceSource.ActivePassive.Active
+        if is_active:
+            stg += ftmp("loaded_shunt_impedance", self.loaded_shunt_impedance * mega, "[MOhm]")
+            stg += etmp("loaded_Q", self.loaded_Q, "")
+            stg += stmp("feedback_on", self.feedback_on, "")
+            stg += stmp("feedback_method", self.feedback_method_str, "")
         if self.ref_amp is not None:
             stg += ftmp("ref_amp", self.ref_amp * kilo, "[kV]")
-            stg += ftmp("ref_phase", self.ref_phase, "[rad]")
+            stg += ftmp("ref_phase", _np.rad2deg(self.ref_phase), "[deg]")
         if self.generator_amp is not None:
             stg += ftmp("generator_amp", self.generator_amp * kilo, "[kV]")
-            stg += ftmp("generator_phase", self.generator_phase, "[rad]")
+            stg += ftmp("generator_phase", _np.rad2deg(self.generator_phase), "[deg]")
         return stg
 
 
@@ -445,7 +488,6 @@ class LongitudinalEquilibrium:
         self._zgrid = None
         self._dist = None
         self._fillpattern = None
-        self._main_voltage = None
         self._calc_fun = None
         self._calc_method = None
         self._print_flag = False
@@ -484,22 +526,9 @@ class LongitudinalEquilibrium:
     @zgrid.setter
     def zgrid(self, value):
         self._zgrid = value
-        self.main_voltage = self.ring.get_voltage_waveform(self._zgrid)
+        vrf = self.ring.get_voltage_waveform(self._zgrid)
+        self.distributions, _ = self.calc_distributions_from_voltage(vrf)
         self._exp_z = None
-
-    @property
-    def main_voltage(self):
-        """."""
-        return self._main_voltage
-
-    @main_voltage.setter
-    def main_voltage(self, value):
-        if value.shape[-1] != self._zgrid.shape[0]:
-            raise ValueError("Wrong shape for voltage.")
-        self._main_voltage = value
-        self.distributions, _ = self.calc_distributions_from_voltage(
-            self._main_voltage
-        )
 
     @property
     def fillpattern(self):
@@ -561,7 +590,6 @@ class LongitudinalEquilibrium:
             zgrid=self._zgrid,
             dist=self._dist,
             fillpatern=self._fillpattern,
-            main_voltage=self._main_voltage,
             max_mode=self.max_mode,
             min_mode0_ratio=self.min_mode0_ratio,
             calc_method=self.calc_method_str,
@@ -579,7 +607,6 @@ class LongitudinalEquilibrium:
         self._zgrid = dic.get("zgrid", self._zgrid)
         self._dist = dic.get("dist", self._dist)
         self._fillpattern = dic.get("fillpattern", self._fillpattern)
-        self._main_voltage = dic.get("main_voltage", self._main_voltage)
         self.max_mode = dic.get("max_mode", self.max_mode)
         self.min_mode0_ratio = dic.get("min_mode0_ratio", self.min_mode0_ratio)
         self.calc_method = dic.get("calc_method", self.calc_method)
@@ -741,7 +768,7 @@ class LongitudinalEquilibrium:
 
         It = self.ring.total_current
         ang = wake_source.detune_angle
-        Rs = wake_source.shunt_impedance
+        Rs = wake_source.loaded_shunt_impedance
 
         volt = -2 * It * F0 * Rs * _np.cos(ang)
         volt *= _np.cos(wr * self.zgrid / _c + ang - Phi0)
@@ -840,7 +867,7 @@ class LongitudinalEquilibrium:
         alpha = wake_source.alpha
         beta = wake_source.beta
         wrbar = wake_source.ang_freq_bar
-        rsh = wake_source.shunt_impedance
+        rsh = wake_source.loaded_shunt_impedance
 
         if self._exp_z is None:
             self._exp_z = _ne.evaluate("exp(beta*zgrid)")[None, :]
@@ -1173,7 +1200,7 @@ class LongitudinalEquilibrium:
 
         def intg(z):
             phi = _np.interp(z, zgrid, phiz)
-            return _np.sqrt((2 / alpha) * (h0i - phi))
+            return _np.sqrt((2 / alpha) * _np.abs(h0i - phi))
 
         zri = +zamp
         zli = -zamp
