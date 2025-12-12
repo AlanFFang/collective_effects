@@ -3,7 +3,7 @@ PREFIX ?=
 PIP ?= pip
 ifeq ($(CONDA_PREFIX),)
 	PREFIX=sudo -H
-	PIP=pip3
+	PIP=pip-sirius
 endif
 
 install: uninstall
