@@ -83,7 +83,7 @@ class ImpedanceSource:
         self.harm_rf = harm_rf
         self.ang_freq_rf = None
         self._loop_ctrl_freq = 0
-        self._loop_ctrl_transfer = 0
+        self._loop_ctrl_transfer = self.zero_transfer_func
         self._loop_ctrl_overall_gain = 0
         self._loop_ctrl_kpid = [0, 0, 0]
         self._loop_ctrl_delay = 0
@@ -256,6 +256,9 @@ class ImpedanceSource:
         pid_ctrl = kp + ki / 1j / (w - wctrl + _EPS) + kd * 1j * (w - wctrl)
         transfer = gain * pid_ctrl * exp_delay * exp_phase
         return transfer
+    
+    def zero_transfer_func(self, w):
+        return 0 * w
 
     @property
     def beta_coupling(self):
