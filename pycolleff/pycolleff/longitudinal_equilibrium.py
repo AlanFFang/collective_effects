@@ -73,6 +73,7 @@ class ImpedanceSource:
         """."""
         self._calc_method = None
         self._active_passive = None
+        self._feedback_method = None
 
         self.ang_freq = ang_freq
         self.Q = Q
