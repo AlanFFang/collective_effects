@@ -4,8 +4,8 @@ import time as _time
 
 import numexpr as _ne
 import numpy as _np
-from mathphys.constants import light_speed as _c
-from mathphys.functions import get_namedtuple as _get_namedtuple
+from scipy.constants import speed_of_light as _c
+from .utils import get_namedtuple as _get_namedtuple
 from scipy.fft import fft as _fft, irfft as _irfft, rfft as _rfft
 from scipy.integrate import quad as _quad, simpson as _simps
 from scipy.optimize import least_squares as _least_squares, root as _root
