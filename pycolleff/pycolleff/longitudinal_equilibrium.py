@@ -352,6 +352,7 @@ class LongitudinalEquilibrium:
         self.equilibrium_info = dict()
         self.identical_bunches = False
 
+
     @property
     def feedback_method_str(self):
         """."""
@@ -795,7 +796,7 @@ class LongitudinalEquilibrium:
         return harm_volt
 
     def calc_longitudinal_equilibrium(
-        self, niter=100, tol=1e-10, beta=1, m=3, print_flag=True
+        self, niter=100, tol=1e-10, beta=1, m=3, print_flag=True, store_every_i_dists=0
     ):
         """."""
         self.print_flag = print_flag
@@ -808,7 +809,7 @@ class LongitudinalEquilibrium:
             self.distributions,
         ]
         dists, converged = self._apply_anderson_acceleration(
-            dists, niter, tol, beta=beta, m=m
+            dists, niter, tol, beta=beta, m=m, store_every_i_dists=store_every_i_dists
         )
 
         # dists = self._apply_random_convergence(dists, niter, tol)
@@ -1592,7 +1593,7 @@ class LongitudinalEquilibrium:
         dist = dist_new
         return dist, idx_ini
 
-    def _apply_anderson_acceleration(self, dists, niter, tol, m=None, beta=1):
+    def _apply_anderson_acceleration(self, dists, niter, tol, store_every_i_dists, m=None, beta=1):
         """."""
         if beta < 0:
             raise Exception("relaxation parameter beta must be positive.")
@@ -1629,7 +1630,10 @@ class LongitudinalEquilibrium:
             xnew *= beta
             if beta != 1:
                 xnew += (1 - beta) * (xold - X_k @ gamma_k)
-            dists.append(xnew)
+            
+            if store_every_i_dists > 0:
+                if k % store_every_i_dists == 0:
+                    dists.append(xnew)
 
             gold = gnew
             # tf2 = _time.time()
