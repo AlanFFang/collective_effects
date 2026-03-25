@@ -1668,7 +1668,7 @@ class LongitudinalEquilibrium:
                 break
         return xnew, hist_dists, converged
 
-    def _apply_random_convergence(self, dist0, niter, tol, store_every_niters):
+    def _apply_random_convergence(self, dist0, niter, tol, store_every_niters=1):
         xold = dist0.ravel()
         hist_dists = []
         converged = False
