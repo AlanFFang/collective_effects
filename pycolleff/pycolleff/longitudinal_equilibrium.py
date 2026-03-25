@@ -812,7 +812,9 @@ class LongitudinalEquilibrium:
             m=m, 
             store_every_niters=store_every_niters
         )
-        #dist, hist_dists, converged = self._apply_random_convergence(self.distributions, niter, tol, store_every_niters=store_every_niters)
+        # dist, hist_dists, converged = self._apply_random_convergence(
+        #     self.distributions, niter, tol, store_every_niters=store_every_niters
+        # )
         hist_dists = [self._reshape_dist(rho) for rho in hist_dists]
         self.distributions = self._reshape_dist(dist)
         # Flush pre-calculated data
