@@ -795,7 +795,7 @@ class LongitudinalEquilibrium:
         return harm_volt
 
     def calc_longitudinal_equilibrium(
-        self, niter=100, tol=1e-10, beta=1, m=3, print_flag=True, store_every_niters=0
+        self, niter=100, tol=1e-10, beta=1, m=3, print_flag=True, store_every_niters=1
     ):
         """."""
         self.print_flag = print_flag
