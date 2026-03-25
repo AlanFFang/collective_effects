@@ -352,7 +352,6 @@ class LongitudinalEquilibrium:
         self.equilibrium_info = dict()
         self.identical_bunches = False
 
-
     @property
     def feedback_method_str(self):
         """."""
@@ -796,29 +795,30 @@ class LongitudinalEquilibrium:
         return harm_volt
 
     def calc_longitudinal_equilibrium(
-        self, niter=100, tol=1e-10, beta=1, m=3, print_flag=True, store_every_i_dists=0
+        self, niter=100, tol=1e-10, beta=1, m=3, print_flag=True, store_every_niters=0
     ):
-        """."""
+        """. """
         self.print_flag = print_flag
         if self.identical_bunches:
             if not _np.allclose(self.fillpattern, self.fillpattern[0]):
                 raise Exception(
                     "identical_bunches=True but fillpattern is nonuniform."
                 )
-        dists = [
-            self.distributions,
-        ]
-        dists, converged = self._apply_anderson_acceleration(
-            dists, niter, tol, beta=beta, m=m, store_every_i_dists=store_every_i_dists
+        dist, hist_dists, converged = self._apply_anderson_acceleration(
+            self.distributions, 
+            niter, 
+            tol, 
+            beta=beta, 
+            m=m, 
+            store_every_niters=store_every_niters
         )
-
-        # dists = self._apply_random_convergence(dists, niter, tol)
-        dists = [self._reshape_dist(rho) for rho in dists]
-        self.distributions = dists[-1]
+        #dist, hist_dists, converged = self._apply_random_convergence(self.distributions, niter, tol, store_every_niters=store_every_niters)
+        hist_dists = [self._reshape_dist(rho) for rho in hist_dists]
+        self.distributions = self._reshape_dist(dist)
         # Flush pre-calculated data
         self._wake_matrix = None
         self._exp_z = None
-        return dists, converged
+        return hist_dists, converged
 
     def get_generator_voltage(self):
         """."""
@@ -1593,14 +1593,14 @@ class LongitudinalEquilibrium:
         dist = dist_new
         return dist, idx_ini
 
-    def _apply_anderson_acceleration(self, dists, niter, tol, store_every_i_dists, m=None, beta=1):
+    def _apply_anderson_acceleration(self, dist0, niter, tol, store_every_niters, m=None, beta=1):
         """."""
         if beta < 0:
             raise Exception("relaxation parameter beta must be positive.")
 
-        xold = dists[-1].ravel()
+        xold = dist0.ravel()
         xnew = self._haissinski_operator(xold)
-        dists.append(xnew)
+        hist_dists = [xnew]
 
         m = m or niter
         where = 0
@@ -1619,7 +1619,7 @@ class LongitudinalEquilibrium:
 
         converged = False
 
-        for k in range(niter):
+        for k in range(1, niter + 1):
             t0 = _time.time()
             gamma_k = _np.linalg.lstsq(G_k, gnew, rcond=None)[0]
             # tf1 = _time.time()
@@ -1631,10 +1631,10 @@ class LongitudinalEquilibrium:
             if beta != 1:
                 xnew += (1 - beta) * (xold - X_k @ gamma_k)
             
-            if store_every_i_dists > 0:
-                if k % store_every_i_dists == 0:
-                    dists.append(xnew)
-
+            if store_every_niters > 0:
+                if not k % store_every_niters:
+                    hist_dists.append(xnew)
+            
             gold = gnew
             # tf2 = _time.time()
             # print(f'MatrixMul: {tf2-tf1:.3f}s')
@@ -1654,7 +1654,7 @@ class LongitudinalEquilibrium:
             # print(f'Trapz: {tf-tf3:.3f}s')
             if self.print_flag:
                 print(
-                    f"Iter.: {k + 1:03d}, Dist. Diff.: {diff[idx]:.3e}"
+                    f"Iter.: {k:03d}, Dist. Diff.: {diff[idx]:.3e}"
                     + f" (bucket {idx:03d}), E.T.: {tf:.3f}s"
                 )
                 # print(f"Iter.: {k+1:03d}, E.T.: {tf-t0:.3f}s")
@@ -1663,22 +1663,27 @@ class LongitudinalEquilibrium:
                 converged = True
                 if self.print_flag:
                     print("distribution ok!")
-                break
-        return dists, converged
+                break   
+        return xnew, hist_dists, converged
 
-    def _apply_random_convergence(self, dists, niter, tol):
-        xold = dists[-1].ravel()
+    def _apply_random_convergence(self, dist0, niter, tol, store_every_niters):
+        xold = dist0.ravel()
+        hist_dists = []
         converged = False
-        for k in range(niter):
+        for k in range(1, niter+1):
             xnew = self._haissinski_operator(xold)
-            dists.append(xnew)
+
+            if store_every_niters > 0:
+                if not k % store_every_niters:
+                    hist_dists.append(xnew)
+
             diff = self._reshape_dist(xnew - xold)
             dz = self.zgrid[1] - self.zgrid[0]
             diff = _mytrapz(_np.abs(diff), dz)
             idx = _np.argmax(diff)
             if self.print_flag:
                 print(
-                    f"Iter.: {k + 1:03d}, Dist. Diff.: {diff[idx]:.3e}"
+                    f"Iter.: {k:03d}, Dist. Diff.: {diff[idx]:.3e}"
                     + f" (bucket {idx:03d})"
                 )
                 print("-" * 20)
@@ -1689,7 +1694,7 @@ class LongitudinalEquilibrium:
                 break
             r = _np.random.randn() / 2
             xold = (1 - r) * xnew + r * xold
-        return dists, converged
+        return xnew, hist_dists, converged
 
     def _haissinski_operator(self, xk):
         """Haissinski operator."""
