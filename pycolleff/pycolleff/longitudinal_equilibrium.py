@@ -797,7 +797,7 @@ class LongitudinalEquilibrium:
     def calc_longitudinal_equilibrium(
         self, niter=100, tol=1e-10, beta=1, m=3, print_flag=True, store_every_niters=0
     ):
-        """. """
+        """."""
         self.print_flag = print_flag
         if self.identical_bunches:
             if not _np.allclose(self.fillpattern, self.fillpattern[0]):
@@ -1663,7 +1663,7 @@ class LongitudinalEquilibrium:
                 converged = True
                 if self.print_flag:
                     print("distribution ok!")
-                break   
+                break
         return xnew, hist_dists, converged
 
     def _apply_random_convergence(self, dist0, niter, tol, store_every_niters):
