@@ -1595,7 +1595,7 @@ class LongitudinalEquilibrium:
         dist = dist_new
         return dist, idx_ini
 
-    def _apply_anderson_acceleration(self, dist0, niter, tol, store_every_niters, m=None, beta=1):
+    def _apply_anderson_acceleration(self, dist0, niter, tol, m=None, beta=1, store_every_niters=1):
         """."""
         if beta < 0:
             raise Exception("relaxation parameter beta must be positive.")
