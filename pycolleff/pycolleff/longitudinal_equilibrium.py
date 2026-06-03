@@ -508,6 +508,8 @@ class LongitudinalEquilibrium:
         self.equilibrium_info = dict()
         self.identical_bunches = False
 
+        self._fill_period = self._get_fill_period()
+
     @property
     def max_mode(self):
         """."""
@@ -542,29 +544,33 @@ class LongitudinalEquilibrium:
             raise ValueError('sum(fillpattern) must be 1.')
         self._fillpattern = value
         self._wake_matrix = None
+        self._fill_period = self._get_fill_period()
 
     @property
     def filled_buckets(self):
         """."""
+        fill = self.fillpattern
         if self.identical_bunches:
-            return 0
-        idx = _np.where(self.fillpattern != 0)[0]
+            idx = _np.where(fill[: self._fill_period] != 0)[0]
+        else:
+            idx = _np.where(fill != 0)[0]
         return idx
 
     @property
     def distributions(self):
         """."""
         if self.identical_bunches:
-            return self._dist[:1, :]
+            return self._dist[: self._fill_period]
         return self._dist
 
     @distributions.setter
     def distributions(self, value):
+        """."""
         if value.ndim != 2:
             raise ValueError('Distributions must have 2 dimensions.')
-        elif value.shape[0] not in (1, self.ring.harm_num):
+        elif value.shape[0] not in (1, self._fill_period, self.ring.harm_num):
             raise ValueError(
-                'First dimension must be equal 1 or ring.harm_num.'
+                'First dimension must be equal 1, fillperiod or ring.harm_num.'
             )
         elif value.shape[1] != self._zgrid.size:
             raise ValueError('Second dimension must be equal zgrid.size.')
@@ -820,22 +826,27 @@ class LongitudinalEquilibrium:
             dist, idx_ini = self._do_zero_padding(dist)
             did_zero_pad = True
 
-        fill = self.ring.total_current * self.fillpattern
+        h = self.ring.harm_num
         if self.identical_bunches:
-            fill = _np.array([self.ring.total_current / self.ring.harm_num])
-        # remove last point in z to do not overlap domains
+            P = self._fill_period
+            M = h // P
+        else:
+            P = h
+            M = 1
+
+        fill = self.ring.total_current * self.fillpattern[:P]
         dist_beam = (fill[:, None] * dist[:, :-1]).ravel()
         dist_dft = _rfft(dist_beam)
 
-        # using real dft, take only positive harmonics
         max_mode = dist_dft.size
         wps = self._create_freqs(max_mode)
-        if self.identical_bunches:
-            wps *= self.ring.harm_num
-        zl_wps = self.get_impedance(w=wps, apply_filter=True, imp_sources=imp_sources)
+        wps *= M
+
+        zl_wps = self.get_impedance(
+            w=wps, apply_filter=True, imp_sources=imp_sources
+        )
 
         dist_dft *= zl_wps.conj()
-
         _harm_volt = (-self.ring.circum) * _irfft(dist_dft)
         _harm_volt = _harm_volt.reshape((-1, dist.shape[1] - 1))
         harm_volt = _np.zeros_like(dist, dtype=complex)
@@ -855,11 +866,14 @@ class LongitudinalEquilibrium:
         circum = self.ring.circum
         rev_time = self.ring.rev_time
         if self.identical_bunches:
-            fillpattern = _np.array([self.ring.total_current / h])[:, None]
-            circum /= h
-            h = 1
+            P = self._fill_period
+            M = h // P
         else:
-            fillpattern = self.ring.total_current * self.fillpattern[:, None]
+            P = h
+            M = 1
+        fillpattern = self.ring.total_current * self.fillpattern[:, None]
+        fillpattern = fillpattern[:P]
+        circum /= M
 
         zgrid = self.zgrid
 
@@ -900,11 +914,11 @@ class LongitudinalEquilibrium:
             log_Ll = -_np.log(1 - exp_betac0)
             # buckets behind current one (l>=n)
             log_Gl = log_Ll - beta * circum
-            log_wmat = log_Ll * _np.tri(h, h, -1)
-            log_wmat += log_Gl * _np.tri(h, h).T
-            ind = _np.arange(h)
+            log_wmat = log_Ll * _np.tri(P, P, -1)
+            log_wmat += log_Gl * _np.tri(P, P).T
+            ind = _np.arange(P)
             diff = ind[:, None] - ind[None, :]
-            log_wmat += -beta * circum * diff / h
+            log_wmat += -beta * circum * diff / P
             self._wake_matrix = _ne.evaluate('exp(log_wmat)')
         V = _np.dot(self._wake_matrix, dist_laplace)
         Vt = (Sn + V[:, None]) / self._exp_z
@@ -923,18 +937,16 @@ class LongitudinalEquilibrium:
         tol=1e-10,
         beta=1,
         m=3,
-        print_flag=True, initial_dist=None,
+        print_flag=True,
+        initial_dist=None,
         store_every_niters=1,
     ):
         """."""
         self.print_flag = print_flag
-        if self.identical_bunches:
-            if not _np.allclose(self.fillpattern, self.fillpattern[0]):
-                raise Exception(
-                    'identical_bunches=True but fillpattern is nonuniform.'
-                )
-        dist, hist_dists, converged = self._apply_anderson_acceleration(
-            self.distributions,
+        dist0 = self.distributions if initial_dist is None else initial_dist
+        dists = [dist0]
+        dist, hist_dists, converged, iters = self._apply_anderson_acceleration(
+            dists,
             niter,
             tol,
             beta=beta,
@@ -1276,13 +1288,11 @@ class LongitudinalEquilibrium:
             shift = -const * (wp * Zlp.imag + wn * Zln.imag)
         return shift + 1j * growth
 
-    def calc_tuneshifts_cbi(self, w, m=1, nbun_fill=None, radiation=False):
+    def calc_tuneshifts_cbi(self, w, m=1, radiation=False):
         """."""
         ring = self.ring
-        num_bun = ring.num_bun
         dampte = ring.dampte
 
-        ring.num_bun = nbun_fill if nbun_fill is not None else ring.harm_num
         if not radiation:
             ring.dampte = _np.inf
 
@@ -1300,7 +1310,6 @@ class LongitudinalEquilibrium:
         # Relative tune-shifts must be multiplied by ws
         deltaw *= ring.sync_tune * ring.rev_ang_freq
 
-        ring.num_bun = num_bun
         ring.dampte = dampte
         return deltaw, Zl, wp, interpol_Z, spectrum
 
@@ -1310,7 +1319,6 @@ class LongitudinalEquilibrium:
         cbmode,
         max_azi=10,
         max_rad=12,
-        nbun_fill=None,
         modecoup_matrix=None,
         fokker_matrix=None,
         use_fokker=True,
@@ -1321,10 +1329,7 @@ class LongitudinalEquilibrium:
     ):
         """."""
         ring = self.ring
-        num_bun = ring.num_bun
         dampte = ring.dampte
-
-        ring.num_bun = nbun_fill if nbun_fill is not None else ring.harm_num
 
         if _np.array(w).size == 2:
             Zl = _partial(self.get_impedance, apply_filter=apply_filter)
@@ -1333,7 +1338,9 @@ class LongitudinalEquilibrium:
 
         if reduced:
             if use_fokker:
-                raise ValueError("use_fokker=True cannot be used when reduced=True")
+                raise ValueError(
+                    'use_fokker=True cannot be used when reduced=True'
+                )
             (eigenfreq, eigenvec, modecoup_matrix) = (
                 ring.reduced_longitudinal_mode_coupling(
                     w=w,
@@ -1362,8 +1369,6 @@ class LongitudinalEquilibrium:
 
         # Relative tune-shifts must be multiplied by ws
         eigenfreq *= ring.sync_tune * ring.rev_ang_freq
-
-        ring.num_bun = num_bun
         ring.dampte = dampte
         return eigenfreq, eigenvec, modecoup_matrix, fokker_matrix
 
@@ -1384,9 +1389,9 @@ class LongitudinalEquilibrium:
         return integral / _2PI
 
     @staticmethod
-    def calc_hmps(z_ij, cb_mode, ms, ps, w0, h):
+    def calc_hmps(z_ij, cb_mode, ms, ps, w0, nr_bun):
         """."""
-        omegaps = (ps * h + cb_mode) * w0
+        omegaps = (ps * nr_bun + cb_mode) * w0
         hmps = _np.zeros((ms.size, ps.size, len(z_ij)), dtype=complex)
         for iz, z in enumerate(z_ij):
             hmps[:, :, iz] = LongitudinalEquilibrium.hmp(z, ms, omegaps)
@@ -1410,13 +1415,13 @@ class LongitudinalEquilibrium:
         eqinfo = self.equilibrium_info
         ring = self.ring
         w0 = ring.rev_ang_freq
-        h = ring.harm_num
+        num_bun = ring.num_bun
 
         psi_J = eqinfo['action_distribution']
         ws_J = _2PI * eqinfo['sync_freq']
         J = eqinfo['action']
 
-        omegap = (ps * h + cb_mode) * w0
+        omegap = (ps * num_bun + cb_mode) * w0
         c_omega = None
         if big_omega is not None:
             c_omega = big_omega[0] + 1j * big_omega[1]
@@ -1569,7 +1574,13 @@ class LongitudinalEquilibrium:
     def _lebedev_determinant(self, big_omega, params):
         hmps, ms, ps, cb_mode, reduced = params
         bmat = self.lebedev_matrix(
-            big_omega, hmps, ms, ps, cb_mode, reduced, adsyncfreq=True
+            big_omega=big_omega,
+            hmps=hmps,
+            ms=ms,
+            ps=ps,
+            cb_mode=cb_mode,
+            reduced=reduced,
+            adsyncfreq=True,
         )
         db = _det(bmat)
         return [db.real, db.imag]
@@ -1619,7 +1630,7 @@ class LongitudinalEquilibrium:
         eqinfo = self.equilibrium_info
         ring = self.ring
         w0 = ring.rev_ang_freq
-        h = ring.harm_num
+        num_bun = ring.num_bun
         I0 = ring.total_current
         E0 = ring.energy
         C0 = ring.circum
@@ -1655,7 +1666,7 @@ class LongitudinalEquilibrium:
             h_mn = h_mid[im]
             for imm in range(nr_ms):
                 h_mmnn = h_mid[imm]
-                omegapp = (ps * h + cb_mode) * w0
+                omegapp = (ps * num_bun + cb_mode) * w0
                 if big_omega is None:
                     zpp = (
                         self.get_impedance(w=omegapp[:, None] + mw_Jn[None, :])
@@ -1695,6 +1706,16 @@ class LongitudinalEquilibrium:
         else:
             cpu_use = cpu_count
         return cpu_use
+
+    def _get_fill_period(self):
+        h = self.ring.harm_num
+        fill = self.fillpattern
+        for p in range(1, h + 1):
+            if h % p != 0:
+                continue
+            if _np.allclose(fill, _np.tile(fill[:p], h // p)):
+                return p
+        return h
 
     def _create_freqs(self, max_mode=None):
         w0 = self.ring.rev_ang_freq
