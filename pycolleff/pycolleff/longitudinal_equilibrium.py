@@ -1776,7 +1776,6 @@ class LongitudinalEquilibrium:
     def _apply_anderson_acceleration(
         self, dist0, niter, tol, m=None, beta=1, store_every_niters=1
     ):
-        """."""
         if beta < 0:
             raise Exception('relaxation parameter beta must be positive.')
 
@@ -1785,62 +1784,85 @@ class LongitudinalEquilibrium:
         hist_dists = [xnew]
 
         m = m or niter
+        m = min(m, 8)  # practical cap for stability/performance
+
+        nr = xnew.size
+
+        # Use Fortran order for efficient column operations
+        G_k = _np.zeros((nr, m), dtype=float, order='F')
+        X_k = _np.zeros((nr, m), dtype=float, order='F')
+
         where = 0
-        nr_xnew = xnew.size
-        G_k = _np.zeros((nr_xnew, m), dtype=float)
-        X_k = _np.zeros((nr_xnew, m), dtype=float)
-        mat = _np.zeros((nr_xnew, m), dtype=float)
 
         gold = xnew - xold
         gnew = self._haissinski_operator(xnew) - xnew
+
         G_k[:, where] = gnew - gold
         X_k[:, where] = gold
-        mat[:, where] = gnew
-        where += 1
-        where %= m
+
+        where = (where + 1) % m
+        filled = 1
 
         converged = False
 
+        dz = self.zgrid[1] - self.zgrid[0]
+
         for k in range(1, niter + 1):
             t0 = _time.time()
-            gamma_k = _np.linalg.lstsq(G_k, gnew, rcond=None)[0]
-            # tf1 = _time.time()
-            # print(f'AndersonLeastSquares: {tf1-t0:.3f}s')
-            xold = xnew
-            xnew = xold + gnew
-            xnew -= mat @ gamma_k
-            xnew *= beta
-            if beta != 1:
-                xnew += (1 - beta) * (xold - X_k @ gamma_k)
+
+            mk = min(filled, m)
+
+            G = G_k[:, :mk]
+            X = X_k[:, :mk]
+
+            # --- Solve normal equations ---
+            GTG = G.T @ G
+            GTg = G.T @ gnew
+
+            GTG += _EPS * _np.eye(mk)
+
+            gamma = _np.linalg.solve(GTG, GTg)
+
+            # --- Compute projections once ---
+            Gg = G @ gamma
+            Xg = X @ gamma
+
+            # --- Anderson update ---
+            xprev = xnew
+            xnew = xprev + gnew - (Gg + Xg)
 
             if store_every_niters > 0:
                 if not k % store_every_niters:
                     hist_dists.append(xnew)
 
-            gold = gnew
-            # tf2 = _time.time()
-            # print(f'MatrixMul: {tf2-tf1:.3f}s')
-            gnew = self._haissinski_operator(xnew) - xnew
-            # tf3 = _time.time()
-            G_k[:, where] = gnew - gold
-            X_k[:, where] = xnew - xold
-            mat[:, where] = G_k[:, where] + X_k[:, where]
-            where += 1
-            where %= m
+            if beta != 1:
+                xnew = beta * xnew + (1 - beta) * (xprev - Xg)
 
+            # --- New residual ---
+            gold = gnew
+            gnew = self._haissinski_operator(xnew) - xnew
+
+            # --- Update history ---
+            G_k[:, where] = gnew - gold
+            X_k[:, where] = xnew - xprev
+
+            where = (where + 1) % m
+            filled = min(filled + 1, m)
+
+            # --- Convergence check ---
             diff = self._reshape_dist(gnew)
-            dz = self.zgrid[1] - self.zgrid[0]
             diff = _mytrapz(_np.abs(diff), dz)
             idx = _np.argmax(diff)
+
             tf = _time.time() - t0
-            # print(f'Trapz: {tf-tf3:.3f}s')
+
             if self.print_flag:
                 print(
-                    f'Iter.: {k:03d}, Dist. Diff.: {diff[idx]:.3e}'
+                    f'Iter.: {k + 1:03d}, Dist. Diff.: {diff[idx]:.3e}'
                     + f' (bucket {idx:03d}), E.T.: {tf:.3f}s'
                 )
-                # print(f"Iter.: {k+1:03d}, E.T.: {tf-t0:.3f}s")
                 print('-' * 20)
+
             if diff[idx] < tol:
                 converged = True
                 if self.print_flag:
