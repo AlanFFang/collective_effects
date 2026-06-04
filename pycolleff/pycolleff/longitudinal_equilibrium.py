@@ -567,16 +567,21 @@ class LongitudinalEquilibrium:
         """."""
         fill = self.fillpattern
         if self.identical_bunches:
-            idx = _np.where(fill[: self._fill_period] != 0)[0]
+            idx = _np.where(fill[: self.fill_period] != 0)[0]
         else:
             idx = _np.where(fill != 0)[0]
         return idx
 
     @property
+    def fill_period(self):
+        """."""
+        return self._fill_period
+
+    @property
     def distributions(self):
         """."""
         if self.identical_bunches:
-            return self._dist[: self._fill_period]
+            return self._dist[: self.fill_period]
         return self._dist
 
     @distributions.setter
@@ -584,7 +589,7 @@ class LongitudinalEquilibrium:
         """."""
         if value.ndim != 2:
             raise ValueError('Distributions must have 2 dimensions.')
-        elif value.shape[0] not in (1, self._fill_period, self.ring.harm_num):
+        elif value.shape[0] not in (1, self.fill_period, self.ring.harm_num):
             raise ValueError(
                 'First dimension must be equal 1, fillperiod or ring.harm_num.'
             )
@@ -858,7 +863,7 @@ class LongitudinalEquilibrium:
 
         h = self.ring.harm_num
         if self.identical_bunches:
-            P = self._fill_period
+            P = self.fill_period
             M = h // P
         else:
             P = h
@@ -896,7 +901,7 @@ class LongitudinalEquilibrium:
         circum = self.ring.circum
         rev_time = self.ring.rev_time
         if self.identical_bunches:
-            P = self._fill_period
+            P = self.fill_period
             M = h // P
         else:
             P = h
