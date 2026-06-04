@@ -248,6 +248,7 @@ class ImpedanceSource:
         self._loop_ctrl_delay = val
 
     def pid_transfer_func(self, w):
+        """."""
         wctrl = self.loop_ctrl_ang_freq
         delay = self.loop_ctrl_delay
         kp, ki, kd = self.loop_ctrl_kpid
@@ -260,10 +261,12 @@ class ImpedanceSource:
         return transfer
 
     def zero_transfer_func(self, w):
+        """."""
         return 0 * w
 
     @property
     def beta_coupling(self):
+        """."""
         return self._beta_coupling
 
     @beta_coupling.setter
@@ -368,6 +371,7 @@ class ImpedanceSource:
 
     @property
     def ref_amp(self):
+        """."""
         return self._ref_amp
 
     @ref_amp.setter
@@ -376,6 +380,7 @@ class ImpedanceSource:
 
     @property
     def ref_phase(self):
+        """."""
         return self._ref_phase
 
     @ref_phase.setter
@@ -384,6 +389,7 @@ class ImpedanceSource:
 
     @property
     def ref_phase_offset(self):
+        """."""
         return self._ref_phase_offset
 
     @ref_phase_offset.setter
@@ -391,6 +397,7 @@ class ImpedanceSource:
         self._ref_phase_offset = value
 
     def optimum_detuning_freq(self, beam_current, form_factor=1 + 0j):
+        """."""
         f_abs = _np.abs(form_factor)
         # f_phs = _np.angle(form_factor)
         dw = self.RoverQ * beam_current * f_abs * _np.cos(self.ref_phase)
@@ -398,6 +405,7 @@ class ImpedanceSource:
         return dw / _2PI
 
     def optimum_beta_coupling(self, beam_current, form_factor=1 + 0j):
+        """."""
         Rs0 = self.shunt_impedance
         f_abs = _np.abs(form_factor)
         beta = beam_current * Rs0 * f_abs
