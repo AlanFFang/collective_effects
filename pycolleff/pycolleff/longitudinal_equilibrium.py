@@ -966,9 +966,8 @@ class LongitudinalEquilibrium:
         """."""
         self.print_flag = print_flag
         dist0 = self.distributions if initial_dist is None else initial_dist
-        dists = [dist0]
         dist, hist_dists, converged, iters = self._apply_anderson_acceleration(
-            dists,
+            dist0,
             niter,
             tol,
             beta=beta,
@@ -1801,7 +1800,6 @@ class LongitudinalEquilibrium:
     ):
         if beta < 0:
             raise Exception('relaxation parameter beta must be positive.')
-
         xold = dist0.ravel()
         xnew = self._haissinski_operator(xold)
         hist_dists = [xnew]
