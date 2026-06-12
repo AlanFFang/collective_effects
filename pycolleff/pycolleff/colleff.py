@@ -156,14 +156,13 @@ class Ring:
         self.gap_voltage = dic.get('gap_voltage', self.gap_voltage)
 
     def get_voltage_waveform(
-            self, zgrid, amplitude=None, phase=None):
+            self, zgrid, amplitude=None, phase=None, rfharmonic=1):
         """."""
         amp = amplitude or self.gap_voltage
         phase0 = phase or self.sync_phase
         wrf = 2*_np.pi*self.rf_freq
         ph = wrf * zgrid / _LSPEED
-        ph += phase0
-        voltage = amp*_np.sin(ph)
+        voltage = amp*_np.sin(rfharmonic * ph + phase0)
         return voltage
 
     def budget_summary(self, budget, fillpattern=None):
