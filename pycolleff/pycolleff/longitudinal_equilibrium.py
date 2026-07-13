@@ -1630,87 +1630,114 @@ class LongitudinalEquilibrium:
 
         nr_ms = ms.size
         nr_ps = omegap.size
-        total_size = nr_ms * nr_ps
 
+        I0 = self.ring.total_current
+        E0 = self.ring.energy
+        C0 = self.ring.circum
+        kappa = _2PI * I0 * _c * _c / (E0 * C0)
+        alpha = self.ring.mom_comp
+        sigmae2 = self.ring.espread**2
+
+        mws_arr = ms * eff_ws
+        has_feedback = feedback_transfer(eff_ws) != 0
+
+        if c_omega is None:
+            z_vals = _np.array([
+                impedance(w=omegap + mw) for mw in mws_arr
+            ])  # (nr_ms, nr_ps)
+            if has_feedback:
+                k_fb_vals = _np.array([
+                    feedback_transfer(mw) for mw in mws_arr
+                ])  # (nr_ms,)
+        else:
+            z_shared = impedance(
+                w=omegap + c_omega
+            )  # (nr_ps,), same for every m
+            z_vals = _np.tile(z_shared, (nr_ms, 1))
+            if has_feedback:
+                k_fb_shared = feedback_transfer(c_omega)
+                k_fb_vals = _np.full(nr_ms, k_fb_shared)
+
+        if not has_feedback:
+            stren = kappa / (alpha * _c * sigmae2)
+            B_m_pp = _np.zeros((nr_ms, nr_ps, nr_ps), dtype=complex)
+
+            for im, _ in enumerate(ms):
+                mws = mws_arr[im]
+                hm = hmps[im]  # (nr_ps, nr_J)
+                integrand = (
+                    hm[:, None, :]
+                    * hm.conj()[None, :, :]
+                    * psi_J[None, None, :]
+                )
+                g = _simps(integrand, x=J, axis=-1)  # (nr_ps, nr_ps)
+
+                zpp_over_wpp = z_vals[im] / omegap  # (nr_ps,), indexed by ipp
+                B_m_pp[im] = 1j * mws * g * zpp_over_wpp[None, :]
+
+            B_mm_pp = (
+                stren * B_m_pp[:, :, None, :] * _np.ones((1, 1, nr_ms, 1))
+            )
+            size = nr_ms * nr_ps
+            B_mm_pp = B_mm_pp.reshape(size, size)
+            D_mm_pp = _np.kron(_np.diag(mws_arr), _np.eye(nr_ps))
+            return D_mm_pp + B_mm_pp
+
+        # has_feedback == True
+        total_size = nr_ms * nr_ps
         M_YY = _np.zeros((total_size, total_size), dtype=complex)
         M_YU = _np.zeros((total_size, nr_ms), dtype=complex)
         M_UY = _np.zeros((nr_ms, total_size), dtype=complex)
         M_UU = _np.zeros((nr_ms, nr_ms), dtype=complex)
 
-        I0 = self.ring.total_current
-        E0 = self.ring.energy
-        C0 = self.ring.circum
-        alpha = self.ring.mom_comp
-        sigmae2 = self.ring.espread**2
-        kappa = _2PI * I0 * _c * _c / (E0 * C0)
-
         dpsi_dJ = -eff_ws * psi_J / (alpha * sigmae2 * _c)
 
         for im, m in enumerate(ms):
-            mws = m * eff_ws
+            mws = mws_arr[im]
             row_start = im * nr_ps
-            H_p_list = [hmps[im, ip] for ip in range(nr_ps)]
-            H_p_conj_list = [h.conj() for h in H_p_list]
 
-            W_p_list = []
-            for ip in range(nr_ps):
-                omegapp = omegap[ip]
-                if c_omega is None:
-                    zpp = impedance(w=omegapp + mws)
-                    k_fb_omega = feedback_transfer(mws)
-                else:
-                    zpp = impedance(w=omegapp + c_omega)
-                    k_fb_omega = feedback_transfer(c_omega)
-                k_fb_omega *= kappa / (I0 * _c)
-                W_p = 1j * kappa * zpp / omegapp
-                W_p_list.append(W_p)
+            hm = hmps[im]  # (nr_ps, nr_J)
+            zpp = z_vals[im]  # (nr_ps,)
+            k_fb = (
+                k_fb_vals[im] * kappa / (I0 * _c)
+            )  # scalar feedback gain for mode m
 
-            for ip in range(nr_ps):
-                M_YY[row_start + ip, row_start + ip] += mws
+            W_p = 1j * kappa * zpp / omegap  # (nr_ps,)
 
-            for ip in range(nr_ps):
-                Wp = W_p_list[ip]
-                H_p_conj = H_p_conj_list[ip]
+            # diagonal (unperturbed) part
+            idx = row_start + _np.arange(nr_ps)
+            M_YY[idx, idx] += mws
 
-                for ipp in range(nr_ps):
-                    H_pp = H_p_list[ipp]
-                    integrand = H_p_conj * H_pp * dpsi_dJ
-                    M_val = _simps(integrand, x=J)
-
-                    for imp in range(len(ms)):
-                        col_start = imp * nr_ps
-                        M_YY[row_start + ipp, col_start + ip] += (
-                            -m * Wp * M_val
-                        )
+            integrand = (
+                hm.conj()[:, None, :] * hm[None, :, :] * dpsi_dJ[None, None, :]
+            )
+            M_grid = _simps(integrand, x=J, axis=-1)  # (nr_ps_ip, nr_ps_ipp)
+            block = -m * (W_p[:, None] * M_grid).T  # indexed [ipp, ip]
+            M_YY[row_start : row_start + nr_ps, :] += _np.tile(
+                block, (1, nr_ms)
+            )
 
             f_m_arr = f_m[im]
-            for ipp in range(nr_ps):
-                H_pp = H_p_list[ipp]
-                integrand = f_m_arr * H_pp * dpsi_dJ  # N_{p'}^{(m)}
-                N_val = _simps(integrand, x=J)
-
-                for imp in range(len(ms)):
-                    M_YU[row_start + ipp, imp] += -m * k_fb_omega * N_val
-
             f_minus_m = f_m_arr.conj()
-            for ip in range(nr_ps):
-                Wp = W_p_list[ip]
-                H_p_conj = H_p_conj_list[ip]
-                integrand = H_p_conj * f_minus_m * dpsi_dJ
-                P_val = _simps(integrand, x=J)
 
-                for imp in range(len(ms)):
-                    col_start = imp * nr_ps
-                    M_UY[im, col_start + ip] += -m * Wp * P_val
+            N_val = _simps(
+                f_m_arr[None, :] * hm * dpsi_dJ[None, :], x=J, axis=-1
+            )
+            # Same value for every feedback-actuator column -> broadcast add.
+            M_YU[row_start : row_start + nr_ps, :] += (-m * k_fb * N_val)[
+                :, None
+            ]
 
-            integrand = f_m_arr * f_minus_m * dpsi_dJ
-            Q_val = _simps(integrand, x=J)
+            P_val = _simps(
+                hm.conj() * f_minus_m[None, :] * dpsi_dJ[None, :], x=J, axis=-1
+            )
+            # Same value for every source m' block -> tile
+            M_UY[im, :] += _np.tile(-m * W_p * P_val, nr_ms)
+
+            Q_val = _simps(f_m_arr * f_minus_m * dpsi_dJ, x=J)
             M_UU[im, im] += mws
-            for imp in range(len(ms)):
-                M_UU[im, imp] += -m * k_fb_omega * Q_val
-
-        M_total = _np.block([[M_YY, M_YU], [M_UY, M_UU]])
-        return M_total
+            M_UU[im, :] += -m * k_fb * Q_val
+        return _np.block([[M_YY, M_YU], [M_UY, M_UU]])
 
     def _get_effective_sync_freq(self, effsyncfreq):
         eqinfo = self.equilibrium_info
