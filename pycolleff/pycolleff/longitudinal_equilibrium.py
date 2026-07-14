@@ -465,23 +465,30 @@ class ImpedanceSource:
         self.harm_rf = dic.get('harm_rf', self.harm_rf)
         self.ang_freq_rf = dic.get('ang_freq_rf', self.ang_freq_rf)
 
+    def calc_total_voltage(self, longeq, dist=None):
+        """Calculate induced + generator voltage."""
+        induced = self.calc_induced_voltage(longeq, dist)
+        if self.active_passive == ImpedanceSource.ActivePassive.Passive:
+            return induced
+        generator = self.get_generator_voltage(longeq=longeq, beamload=induced)
+        return induced + generator
+
     def calc_induced_voltage(self, longeq, dist=None):
-        """."""
+        """Calculate induced (beam-loading) voltage."""
         if dist is None:
             dist = longeq.distributions
 
         if self.calc_method == self.Methods.ImpedanceDFT:
-            return self.calc_induced_voltage_impedance_dft(longeq, dist)
+            func = self.calc_induced_voltage_impedance_dft
         elif self.calc_method == self.Methods.ImpedanceModeSel:
-            return self.calc_induced_voltage_impedance_mode_selection(
-                longeq, dist
-            )
+            func = self.calc_induced_voltage_impedance_mode_selection
         elif self.calc_method == self.Methods.Wake:
-            return self.calc_induced_voltage_wake(longeq, dist)
+            func = self.calc_induced_voltage_wake
         elif self.calc_method == self.Methods.UniformFillAnalytic:
-            return self.calc_induced_voltage_uniform_filling(longeq, dist)
+            func = self.calc_induced_voltage_uniform_filling
         else:
             raise ValueError('Wrong calc_method!')
+        return func(longeq=longeq, dist=dist)
 
     def calc_induced_voltage_uniform_filling(self, longeq, dist):
         """."""
@@ -498,7 +505,7 @@ class ImpedanceSource:
         volt *= _np.cos(wr * longeq.zgrid / _c + ang - Phi0)
         return _np.tile(volt, (longeq.ring.harm_num, 1))
 
-    def get_harmonics_impedance_and_filling(self, longeq, w):
+    def get_harmonics_impedance_and_filling(self, longeq, w=None):
         """."""
         if w is None:
             w = self._create_freqs(longeq.ring.rev_ang_freq, self.max_mode)
@@ -678,7 +685,6 @@ class ImpedanceSource:
         harm_volt = Vt.real
         harm_volt -= alpha / wrbar * Vt.imag
         harm_volt *= -2 * alpha * rsh * rev_time
-
         return harm_volt
 
     def get_generator_voltage(self, longeq, beamload):
@@ -2039,22 +2045,10 @@ class LongitudinalEquilibrium:
 
     def _haissinski_operator(self, xk):
         """Haissinski operator."""
-        # t0 = _time.time()
         xk = self._reshape_dist(xk)
         total_volt = _np.zeros(xk.shape)
-        active_beamloads = []
-
         for src in self.impedance_sources:
-            induced_volt = src.calc_induced_voltage(longeq=self, dist=xk)
-            total_volt += induced_volt
-            if src.active_passive == ImpedanceSource.ActivePassive.Active:
-                active_beamloads.append((src, induced_volt))
-
-        for src, beamload in active_beamloads:
-            total_volt += src.get_generator_voltage(
-                longeq=self, beamload=beamload
-            )
-
+            total_volt += src.calc_total_voltage(longeq=self, dist=xk)
         self.total_voltage = total_volt
         fxk, _ = self.calc_distributions_from_voltage(total_volt)
         return fxk.ravel()
