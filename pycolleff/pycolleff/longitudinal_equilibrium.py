@@ -529,17 +529,22 @@ class ImpedanceSource:
 
     def calc_induced_voltage_impedance_mode_selection(self, longeq, dist):
         """."""
-        h = longeq.ring.harm_num
-        w0 = longeq.ring.rev_ang_freq
+        ring = longeq.ring
+        h = ring.harm_num
+        w0 = ring.rev_ang_freq
         fillpattern = longeq.fillpattern
 
         if longeq.identical_bunches:
-            fillpattern = _np.array([1.0])
-            h = 1
-        fillpattern = longeq.ring.total_current * fillpattern
+            fper = longeq.fill_period
+            nbun = h // fper
+        else:
+            fper = h
+            nbun = 1
+
+        fillpattern = ring.total_current * nbun * fillpattern[:fper]
         zgrid = longeq.zgrid
 
-        zn_ph = (1j * _2PI / h) * _np.arange(h)[None, :]  # noqa: F841
+        zn_ph = (1j * _2PI / h) * _np.arange(fper)[None, :]  # noqa: F841
         z_ph = (1j * w0 / _c) * zgrid[None, :]  # noqa: F841
 
         ps, zl_wps, _ = self.get_harmonics_impedance_and_filling(
@@ -550,7 +555,7 @@ class ImpedanceSource:
         zl_wp *= zl_wps[:, None].conj()
 
         expph = _ne.evaluate('exp(-ps*zn_ph)')
-        harm_volt = _np.zeros((h, zgrid.size), dtype=complex)
+        harm_volt = _np.zeros((fper, zgrid.size), dtype=complex)
         for idx, p in enumerate(ps):
             dist_fourier = longeq.calc_fourier_transform(w=p * w0, dist=dist)
 
