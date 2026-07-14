@@ -72,6 +72,7 @@ class ImpedanceSource:
         active_passive=ActivePassive.Passive,
     ):
         """."""
+        self.name = ''
         self._calc_method = None
         self._active_passive = None
         self._feedback_method = None
@@ -104,7 +105,7 @@ class ImpedanceSource:
         self.feedback_method = self.FeedbackMethod.Phasor
         self.feedback_on = False
         self._max_mode = 10 * 864
-        self.min_mode0_ratio = 1e-9
+        self._min_mode0_ratio = 1e-9
 
     @property
     def calc_method_str(self):
@@ -125,7 +126,7 @@ class ImpedanceSource:
         elif int(value) in self.Methods:
             self._calc_method = int(value)
         else:
-            raise ValueError('Wrong value for calc_method.')
+            raise ValueError(f'{self.name}: Wrong value for calc_method.')
 
     @property
     def active_passive_str(self):
@@ -146,7 +147,7 @@ class ImpedanceSource:
         elif int(value) in self.ActivePassive:
             self._active_passive = int(value)
         else:
-            raise ValueError('Wrong value for active_passive.')
+            raise ValueError(f'{self.name}: Wrong value for active_passive.')
 
     @property
     def feedback_method_str(self):
@@ -167,7 +168,7 @@ class ImpedanceSource:
         elif int(value) in self.FeedbackMethod:
             self._feedback_method = int(value)
         else:
-            raise ValueError('Wrong value for feedback_method.')
+            raise ValueError(f'{self.name}: Wrong value for feedback_method.')
 
     @property
     def max_mode(self):
@@ -177,6 +178,15 @@ class ImpedanceSource:
     @max_mode.setter
     def max_mode(self, value):
         self._max_mode = value
+
+    @property
+    def min_mode0_ratio(self):
+        """."""
+        return self._min_mode0_ratio
+
+    @min_mode0_ratio.setter
+    def min_mode0_ratio(self, value):
+        self._min_mode0_ratio = value
 
     def get_impedance(self, w, apply_filter=False):
         """."""
@@ -367,9 +377,9 @@ class ImpedanceSource:
         wrf = self.ang_freq_rf
         wr = self.res_ang_freq
         if wr == 0:
-            raise Exception('wr cannot be zero!')
+            raise Exception(f'{self.name}: wr cannot be zero!')
         if wrf == 0:
-            raise Exception('wrf cannot be zero!')
+            raise Exception(f'{self.name}: wrf cannot be zero!')
         tan = Q * (wr / (nharm * wrf) - nharm * wrf / wr)
         angle = _np.arctan2(tan, 1)
         return angle
@@ -448,6 +458,7 @@ class ImpedanceSource:
     def to_dict(self):
         """Save state to dictionary."""
         return dict(
+            name=self.name,
             res_ang_freq=self.res_ang_freq,
             Q=self.Q,
             shunt_impedance=self.shunt_impedance,
@@ -458,6 +469,7 @@ class ImpedanceSource:
 
     def from_dict(self, dic):
         """Load state from dictionary."""
+        self.name = dic.get('name', self.name)
         self.res_ang_freq = dic.get('res_ang_freq', self.res_ang_freq)
         self.Q = dic.get('Q', self.Q)
         self.shunt_impedance = dic.get('shunt_impedance', self.shunt_impedance)
@@ -485,9 +497,14 @@ class ImpedanceSource:
         elif self.calc_method == self.Methods.Wake:
             func = self.calc_induced_voltage_wake
         elif self.calc_method == self.Methods.UniformFillAnalytic:
+            if longeq.fill_period != 1:
+                raise ValueError(
+                    f'{self.name}: fill pattern must be uniform to use '
+                    + 'calc_method = UniformFillAnalytic'
+                )
             func = self.calc_induced_voltage_uniform_filling
         else:
-            raise ValueError('Wrong calc_method!')
+            raise ValueError(f'{self.name}: Wrong calc_method!')
         return func(longeq=longeq, dist=dist)
 
     def calc_induced_voltage_uniform_filling(self, longeq, dist):
@@ -503,7 +520,7 @@ class ImpedanceSource:
 
         volt = -2 * It * F0 * Rs * _np.cos(ang)
         volt *= _np.cos(wr * longeq.zgrid / _c + ang - Phi0)
-        return _np.tile(volt, (longeq.ring.harm_num, 1))
+        return volt
 
     def get_harmonics_impedance_and_filling(self, longeq, w=None):
         """."""
@@ -696,7 +713,7 @@ class ImpedanceSource:
         if self.feedback_on:
             if not len(beamload):
                 raise ValueError(
-                    'Feedback is on but there is no active '
+                    f'{self.name}: Feedback is on but there is no '
                     + 'beam loading voltage!'
                 )
             if self.feedback_method == ImpedanceSource.FeedbackMethod.Phasor:
@@ -724,7 +741,7 @@ class ImpedanceSource:
                 )
             else:
                 raise ValueError(
-                    'Wrong feedback method: must be '
+                    f'{self.name}: Wrong feedback method: must be '
                     + "'Phasor' or 'LeastSquares'"
                 )
         else:
@@ -842,7 +859,8 @@ class ImpedanceSource:
         etmp = '{0:25s}: {1:.2e}  {2:s}\n'.format
         mega = 1e-6
         kilo = 1e-3
-        stg = stmp('calc_method', self.calc_method_str, '')
+        stg = stmp('name', self.name, '')
+        stg += stmp('calc_method', self.calc_method_str, '')
         stg += stmp('active_passive', self.active_passive_str, '')
         stg += ftmp('ang_freq_rf', self.ang_freq_rf * mega, '[Mrad/s]')
         stg += ftmp('res_ang_freq', self.res_ang_freq * mega, '[Mrad/s]')
