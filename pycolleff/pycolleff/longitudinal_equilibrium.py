@@ -1609,7 +1609,7 @@ class LongitudinalEquilibrium:
         ms,
         ps,
         cb_mode,
-        feedback_transfer=0.0,
+        feedback_transfer=None,
         reduced=False,
         adsyncfreq=True,
         effsyncfreq='center',
@@ -1631,6 +1631,8 @@ class LongitudinalEquilibrium:
         c_omega = None
         if big_omega is not None:
             c_omega = big_omega[0] + 1j * big_omega[1]
+        if feedback_transfer is None:
+            feedback_transfer = ImpedanceSource.zero_transfer_func
         f_m = self._auto_calc_fb_fourier_coeffs(ms)
         if adsyncfreq:
             B_pp = self._fill_lebedev_matrix_adsyncfreq(
@@ -1953,12 +1955,14 @@ class LongitudinalEquilibrium:
         ms,
         ps,
         cb_mode,
-        feedback_transfer=lambda x: 0,
+        feedback_transfer=None,
         method='lm',
         tol=None,
         reduced=False,
     ):
         """Eq. (27) of Ref. [2]."""
+        if feedback_transfer is None:
+            feedback_transfer = ImpedanceSource.zero_transfer_func
         params = (hmps, ms, ps, cb_mode, reduced, feedback_transfer)
         root = _root(
             _partial(self._lebedev_determinant, params=params),
